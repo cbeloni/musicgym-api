@@ -59,6 +59,33 @@ def run_migrations(engine: Engine) -> list[str]:
                 )
                 executed_versions.append(version)
                 continue
+            # A migração 010 renomeia a tabela das sequências do Virtual Piano.
+            # Como o create_all() roda antes, a tabela nova pode já existir
+            # (vazia): nesse caso os registros são copiados antes de a tabela
+            # antiga ser removida.
+            if version == "010_rename_piano_warmups_to_piano_sequences":
+                inspector = inspect(connection)
+                has_old = inspector.has_table("piano_warmups")
+                has_new = inspector.has_table("piano_sequences")
+                if has_old and not has_new:
+                    connection.execute(text("RENAME TABLE piano_warmups TO piano_sequences"))
+                elif has_old and has_new:
+                    if connection.execute(text("SELECT COUNT(*) FROM piano_sequences")).scalar() == 0:
+                        connection.execute(
+                            text(
+                                "INSERT INTO piano_sequences "
+                                "(id, name, sequence, created_by_id, created_at, updated_at) "
+                                "SELECT id, name, sequence, created_by_id, created_at, updated_at "
+                                "FROM piano_warmups"
+                            )
+                        )
+                    connection.execute(text("DROP TABLE piano_warmups"))
+                connection.execute(
+                    text("INSERT INTO schema_migrations (version) VALUES (:version)"),
+                    {"version": version},
+                )
+                executed_versions.append(version)
+                continue
             for statement in [part.strip() for part in sql.split(";") if part.strip()]:
                 connection.execute(text(statement))
             connection.execute(

@@ -3,16 +3,16 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class PianoWarmupCreate(BaseModel):
+class PianoSequenceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     sequence: str = Field(min_length=1, max_length=2048)
 
 
-class PianoWarmupUpdate(PianoWarmupCreate):
+class PianoSequenceUpdate(PianoSequenceCreate):
     pass
 
 
-class PianoWarmupOut(PianoWarmupCreate):
+class PianoSequenceOut(PianoSequenceCreate):
     id: int
     created_by_id: int
     created_at: datetime
