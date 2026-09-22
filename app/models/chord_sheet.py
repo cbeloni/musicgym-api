@@ -17,6 +17,7 @@ class ChordSheet(Base):
     key_signature: Mapped[str | None] = mapped_column(String(16), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     image_data: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
+    audio_data: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
     is_bucket_storage: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )

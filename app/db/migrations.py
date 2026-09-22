@@ -86,6 +86,20 @@ def run_migrations(engine: Engine) -> list[str]:
                 )
                 executed_versions.append(version)
                 continue
+            # A migração 011 adiciona a coluna do áudio da cifra. Como o
+            # create_all() roda antes, a coluna pode já existir (banco novo):
+            # nesse caso apenas registra a versão.
+            if version == "011_add_audio_to_chord_sheets":
+                inspector = inspect(connection)
+                if inspector.has_table("chord_sheets"):
+                    columns = {column["name"] for column in inspector.get_columns("chord_sheets")}
+                    if "audio_data" in columns:
+                        connection.execute(
+                            text("INSERT INTO schema_migrations (version) VALUES (:version)"),
+                            {"version": version},
+                        )
+                        executed_versions.append(version)
+                        continue
             for statement in [part.strip() for part in sql.split(";") if part.strip()]:
                 connection.execute(text(statement))
             connection.execute(

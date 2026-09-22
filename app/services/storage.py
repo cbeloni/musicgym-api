@@ -1,6 +1,8 @@
 """Serviço de armazenamento de arquivos (S3-compatível — Magalu Objects).
 
-Responsável por enviar/remover arquivos (imagens e PDFs) das cifras no bucket.
+Responsável por enviar/remover arquivos das cifras no bucket:
+- imagens/PDFs da cifra (pasta ``chord_sheets``);
+- áudio da cifra (pasta ``audios``).
 Quando o bucket não está configurado, mantém o comportamento legado de gravar
 o data URI completo no banco.
 """
@@ -16,6 +18,7 @@ import boto3
 from app.core.config import BUCKET_NAME, BUCKET_REGION, settings
 
 FOLDER = "chord_sheets"
+AUDIO_FOLDER = "audios"
 logger = logging.getLogger(__name__)
 
 
@@ -49,18 +52,32 @@ def _extension_for_content_type(content_type: str) -> str:
         "image/webp": ".webp",
         "image/svg+xml": ".svg",
         "application/pdf": ".pdf",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/mpeg3": ".mp3",
+        "audio/x-mpeg-3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/wave": ".wav",
+        "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/aac": ".aac",
+        "audio/webm": ".webm",
+        "audio/flac": ".flac",
+        "audio/x-flac": ".flac",
     }
     return mapping.get(content_type.lower().strip(), ".bin")
 
 
-def upload_data_uri(data_uri: str) -> str:
-    """Envia um data URI (imagem/PDF) para o bucket e retorna a chave (caminho) do objeto."""
+def upload_data_uri(data_uri: str, folder: str = FOLDER) -> str:
+    """Envia um data URI para o bucket e retorna a chave (caminho) do objeto."""
     if "," not in data_uri:
         raise ValueError("data URI inválida")
     header, payload = data_uri.split(",", 1)
     content_type = header.split(";")[0].replace("data:", "").strip() or "application/octet-stream"
     raw = base64.b64decode(payload)
-    object_key = f"{FOLDER}/{uuid.uuid4().hex}{_extension_for_content_type(content_type)}"
+    object_key = f"{folder}/{uuid.uuid4().hex}{_extension_for_content_type(content_type)}"
 
     logger.info(
         "Enviando arquivo para o bucket: config=%s key=%s content_type=%s",
@@ -144,6 +161,42 @@ def process_image_data(image_data: list[str] | None) -> tuple[str | None, bool]:
         _bucket_config_summary(),
     )
     return json.dumps(items), uses_bucket
+
+
+def process_audio_data(audio_data: str | None) -> str | None:
+    """Normaliza o `audio_data` recebido no payload.
+
+    - Data URI de áudio é enviado ao bucket (pasta ``audios``) e substituído
+      pelo caminho do objeto.
+    - Valor que já é um caminho do bucket (chave) é mantido como está
+      (caso de edição de cifras que já possuem áudio).
+    - Se o bucket não estiver configurado, mantém o data URI
+      (compatibilidade com o comportamento anterior).
+    """
+    audio_data = (audio_data or "").strip()
+    if not audio_data:
+        return None
+
+    if audio_data.startswith("data:"):
+        if settings.bucket_configured:
+            return upload_data_uri(audio_data, AUDIO_FOLDER)
+        logger.warning(
+            "Bucket NÃO configurado (endpoint/credenciais ausentes). Mantendo o áudio como "
+            "data URI no banco (legado). Config=%s",
+            _bucket_config_summary(),
+        )
+        return audio_data
+
+    # Já é um caminho no bucket (chave) — mantém
+    return audio_data
+
+
+def parse_audio_data_key(audio_data: str | None) -> str | None:
+    """Extrai a chave do bucket a partir do valor de `audio_data` salvo no banco."""
+    audio_data = (audio_data or "").strip()
+    if not audio_data or audio_data.startswith("data:"):
+        return None
+    return audio_data
 
 
 def parse_image_data_keys(image_data: str | list | None) -> list[str]:

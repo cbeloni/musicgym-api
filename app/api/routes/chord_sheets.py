@@ -29,7 +29,9 @@ from app.services.sharing import (
 )
 from app.services.storage import (
     delete_file,
+    parse_audio_data_key,
     parse_image_data_keys,
+    process_audio_data,
     process_image_data,
 )
 
@@ -63,7 +65,11 @@ def _enrich_sheet(sheet: ChordSheet, schema=ChordSheetOut):
     data.view_count = int(view_count or 0)
     data.share_url = f"{settings.BASE_URL}/c/{sheet.share_token}"
     if "bucket_base_url" in schema.model_fields:
-        data.bucket_base_url = settings.bucket_base_url if sheet.is_bucket_storage else None
+        # O bucket_base_url também é necessário quando apenas o áudio está no bucket.
+        has_audio_in_bucket = bool(parse_audio_data_key(sheet.audio_data))
+        data.bucket_base_url = (
+            settings.bucket_base_url if (sheet.is_bucket_storage or has_audio_in_bucket) else None
+        )
     return data
 
 
@@ -268,6 +274,7 @@ def create_chord_sheet(
 ) -> ChordSheetOut:
     try:
         image_data_json, is_bucket_storage = process_image_data(payload.image_data)
+        audio_data = process_audio_data(payload.audio_data)
     except Exception as exc:
         logger.exception("Falha ao processar arquivos da cifra (create): %s", exc)
         raise HTTPException(
@@ -275,8 +282,9 @@ def create_chord_sheet(
             detail="Falha ao enviar o arquivo para o bucket. Verifique a configuração do bucket (BUCKET_URL/credenciais).",
         )
     chord_sheet = ChordSheet(
-        **payload.model_dump(exclude={"is_private", "image_data"}),
+        **payload.model_dump(exclude={"is_private", "image_data", "audio_data"}),
         image_data=image_data_json,
+        audio_data=audio_data,
         is_bucket_storage=is_bucket_storage,
         is_private=payload.is_private,
         share_token=str(uuid.uuid4()),
@@ -302,6 +310,7 @@ def update_chord_sheet(
         raise HTTPException(status_code=403, detail="Not allowed")
 
     update_data = payload.model_dump(exclude_unset=True)
+    previous_audio_key = parse_audio_data_key(chord_sheet.audio_data)
     if "image_data" in update_data:
         try:
             image_data_json, is_bucket_storage = process_image_data(update_data["image_data"])
@@ -313,6 +322,21 @@ def update_chord_sheet(
             )
         update_data["image_data"] = image_data_json
         update_data["is_bucket_storage"] = is_bucket_storage
+    if "audio_data" in update_data:
+        try:
+            update_data["audio_data"] = process_audio_data(update_data["audio_data"])
+        except Exception as exc:
+            logger.exception("Falha ao processar o áudio da cifra (update): %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falha ao enviar o áudio para o bucket. Verifique a configuração do bucket (BUCKET_URL/credenciais).",
+            )
+        # Remove do bucket o áudio anterior quando ele foi substituído ou removido.
+        if previous_audio_key and previous_audio_key != update_data["audio_data"]:
+            try:
+                delete_file(previous_audio_key)
+            except Exception:
+                pass
     if "is_private" in update_data and chord_sheet.created_by_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the owner can change privacy")
     for key, value in update_data.items():
@@ -377,6 +401,12 @@ def delete_chord_sheet(
                 delete_file(key)
             except Exception:
                 pass
+    audio_key = parse_audio_data_key(chord_sheet.audio_data)
+    if audio_key:
+        try:
+            delete_file(audio_key)
+        except Exception:
+            pass
 
     db.delete(chord_sheet)
     db.commit()

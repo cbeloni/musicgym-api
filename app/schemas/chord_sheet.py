@@ -27,12 +27,33 @@ def _normalize_image_data(value: str | list[str] | None) -> list[str] | None:
     return None
 
 
+def _normalize_audio_data(value: str | None) -> str | None:
+    """Normaliza o campo `audio_data` do payload.
+
+    Aceita um data URI de áudio (data:audio/...) ou o caminho do objeto no
+    bucket (ex.: ``audios/0004.mp3``).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("audio_data deve ser um texto.")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.startswith("data:") and not normalized.startswith("data:audio/"):
+        raise ValueError(
+            "audio_data deve conter um áudio (data:audio/...) ou o caminho no bucket."
+        )
+    return normalized
+
+
 class ChordSheetBase(BaseModel):
     title: str
     artist: str
     key_signature: str | None = None
     content: str
     image_data: list[str] | None = None
+    audio_data: str | None = None
     youtube_url: HttpUrl | None = None
     drum_machine: str | None = Field(default=None, max_length=2048)
     scroll_speed: float = Field(default=1.0, ge=0.2, le=1.8)
@@ -42,6 +63,11 @@ class ChordSheetBase(BaseModel):
     @classmethod
     def parse_image_data(cls, value):
         return _normalize_image_data(value)
+
+    @field_validator("audio_data", mode="before")
+    @classmethod
+    def parse_audio_data(cls, value):
+        return _normalize_audio_data(value)
 
     @model_validator(mode="after")
     def validate_content_or_image(self):
@@ -92,6 +118,9 @@ class ChordSheetOut(ChordSheetBase):
     # False quando estão gravadas como data URIs no banco (legado) ou não há arquivos.
     is_bucket_storage: bool = False
     bucket_base_url: str | None = None
+    # Áudio da cifra: caminho no bucket (ex.: audios/xxx.mp3) ou data URI (legado).
+    # Fica nulo quando a cifra não possui áudio.
+    audio_data: str | None = None
 
     class Config:
         from_attributes = True
